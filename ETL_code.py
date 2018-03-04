@@ -22,9 +22,12 @@ df_key = df[['chimpcode', 'ratercode']]
 rater_list = np.unique(df_key['ratercode'])
 # The data processing step to find the complete pairwise list of chimp-grader-grader groupings
 count_cutoff = 20
+# There are not many missing values in the columns we are interested (at most 4 in one column)
+df.loc[:,'dom.raw':'innov.raw'].isnull().sum()
+# The best way to deal with these missing values in not to impute, but rather to ignore 
+# them during the outcome analysis step when comparing the scores between raters for that chimp
 
-
-rater_pairs = pd.DataFrame()
+rater_pairs = DataFrame()
 count = 0
 for rater1 in rater_list:
     amended_list = rater_list[np.where(rater_list > rater1)]
@@ -67,25 +70,42 @@ def funcMergeRaters(df, rater_groups, group_size, columns_of_interest = ['chimpc
         else:
             rater_tot = rater_tot.merge(rater, on = ['chimpcode', 'ratercode_' + str(group_num + 1)])
     return rater_tot
-raters_data = funcMergeRaters(df = df, rater_groups = rater_pairs, group_size = 2)
 
-def funcAllBayesFactor(rater_tot, group_size, columns_of_interest = ['dom.raw', 'sol.raw', 'impl.raw', 'symp.raw', 
+
+def funcAllBayesFactor(rater_tot, group_size = 2, num_cats = 7, columns_of_interest = ['dom.raw', 'sol.raw', 'impl.raw', 'symp.raw', 
                                              'stbl.raw', 'invt.raw', 'depd.raw', 'soc.raw', 'thotl.raw', 'help.raw', 
                                              'exct.raw', 'inqs.raw', 'decs.raw', 'indv.raw', 'reckl.raw', 'sens.raw', 
                                              'unem.raw', 'cur.raw', 'vuln.raw', 'actv.raw', 'pred.raw', 'conv.raw', 'cool.raw', 'innov.raw']):
+    """
     
-    
-    
+    """
+    df_bayes_factors = DataFrame()
+    ratercodes = ['ratercode_' + str(i) for i in range(1, group_size + 1)]
+    for name, group in rater_tot.groupby(ratercodes):
+#        print(name)
+        for col in columns_of_interest:
+#            print(col)
+            cols = [col + '_' + str(i) for i in range(1, group_size + 1)]
+            df_cols = group[cols]
+            # Important step here: Remove the row that contains any NAs from the
+            # DataFrame before it is passed to the Outcome Analysis function
+            if df_cols.isnull().any().any():
+                print("Up to " + str(df_cols.isnull().sum().sum()) + " rows of " + str(len(df_cols)) + " total dropped for " + str(name) + " and " + col + ".")
+                if (len(df_cols) - df_cols.isnull().sum().sum() < 20):
+                    print("\n\n\nWARNING!!! Possibly fewer than 20 observations used to compute the Baye's Factor!\n\n\n")
+                df_cols = df_cols.dropna()
+            cat_counts = funcCountCategories(df_cols, group_size, num_cats)
+            bayes_factor = funcOneBayesFactor(cat_counts)
+            p_same = 1 / (1 + bayes_factor)
+            p_diff = bayes_factor / (1 + bayes_factor)
+            df_bayes_factors = df_bayes_factors.append(DataFrame([{'raters' : name, 'trait' : col, 'bayes_factor' : bayes_factor, 'p(diff)' : p_diff, 'p(same)' : p_same}]))
+            df_bayes_factors = df_bayes_factors[['raters', 'trait', 'bayes_factor', 'p(diff)', 'p(same)']]
+    return df_bayes_factors
+            
 
-    
-    
+raters_data = funcMergeRaters(df = df, rater_groups = rater_pairs, group_size = 2)
+pairs_bayes_factors = funcAllBayesFactor(raters_data, 2, 7)   
 
-try_this = list(raters_data.groupby(['ratercode_1', 'ratercode_2']))[0][1]
-vec_cols = try_this[['dom.raw_1', 'dom.raw_2']]
-
-unit_vector = {1 : 1, 2 : 1, 3 : 1, 4 : 1, 5 : 1, 6 : 1, 7 : 1}
-categories_1 = {1 : 0, 2 : 0, 3 : 0, 4 : 0, 5 : 0, 6 : 0, 7 : 0}
-categories_2 = {1 : 0, 2 : 0, 3 : 0, 4 : 0, 5 : 0, 6 : 0, 7 : 0}
 
 def funcCountCategories(vec_cols, group_nums, category_nums):
     """
@@ -95,10 +115,7 @@ def funcCountCategories(vec_cols, group_nums, category_nums):
     It transforms these inputs into the category-counts that we need for input to the Dirichlet Beta function
     """
     for i in range(group_nums):
-#        cat_dicts = [{1 : 0, 2 : 0, 3 : 0, 4 : 0, 5 : 0, 6 : 0, 7 : 0} for i in range(group_nums)]
-#        cat_dicts = [pd.Series(0, index = range(1, 8), name = 'counts') for i in range(group_nums)]
-        cat_dicts = [pd.Series(0, index = range(1, category_nums + 1), name = 'counts') for i in range(group_nums)]
-#        cat_dicts = [{1 : 0, 2 : 0, 3 : 0} for i in range(group_nums)]
+        cat_dicts = [Series(0, index = range(1, category_nums + 1), name = 'counts') for i in range(group_nums)]
     for i, row in vec_cols.iterrows():
         for j in range(group_nums):
             cat_dicts[j][row[j]] += 1
@@ -110,122 +127,172 @@ def funcOneBayesFactor(cat_counts):
     
     """
     category_nums = len(cat_counts[0])
-    unit_vector = pd.Series(1, index = range(1, category_nums + 1), name = 'counts')
-    numer = np.asarray([betaFunc(unit_vector + cat_count) for cat_count in cat_counts])
-#    numerator = np.prod()
-    denom = betaFunc(unit_vector) * betaFunc(unit_vector + sum(cat_counts))
-    # Trying to be more efficient and avoid integer overflow
-    numer[0] = numer[0] / denom
-    return np.prod(numer)
+    unit_vector = Series(1, index = range(1, category_nums + 1), name = 'counts')
+    numerList = [betaFunc(unit_vector + cat_count) for cat_count in cat_counts]
+    # Go through and multiply the values together
+    for i in range(1, len(numerList)):
+        if i == 1:
+            numer = funcPrimeFactorMultiplication(numerList[i-1], numerList[i])
+        else:
+            numer = funcPrimeFactorMultiplication(numer, numerList[i])
+    denom = funcPrimeFactorMultiplication(betaFunc(unit_vector), betaFunc(unit_vector + sum(cat_counts)))
+    finalValue = funcPrimeFactorDivision(numer, denom)
+    returnThis = funcEvaluatePrimeFactor(finalValue)
+    return returnThis
     
 def betaFunc(cat_count):
-    numer = np.asarray([gammaFunc(val) for val in cat_count])
+    numerList = [gammaFunc(val) for val in cat_count]
+    # Go through and multiply the values together
+    for i in range(1, len(numerList)):
+        if i == 1:
+            numer = funcPrimeFactorMultiplication(numerList[i-1], numerList[i])
+        else:
+            numer = funcPrimeFactorMultiplication(numer, numerList[i])
     denom = gammaFunc(sum(cat_count))
-    # Trying to be more efficient and avoid integer overflow
-    numer = np.append(numer[0] / denom, numer[1:])
-    return np.prod(numer)
+    return funcPrimeFactorDivision(numer, denom)
      
 def gammaFunc(value):
-    return math.factorial(value - 1)
+    return funcFactorialPrimeFactors(value - 1)
 
-# Can I get this to work on the example?
-vec_cols = pd.DataFrame([[1, 1], [3, 3], [1, 1], [3, 2], [1, 2], [1, 3], 
+def funcPrimeFactorMultiplication(a, b):
+    return a.add(b, fill_value=0).astype('int')
+
+def funcPrimeFactorDivision(a, b):
+    return a.subtract(b, fill_value=0).astype('int')
+
+def funcEvaluatePrimeFactor(finalValue):
+    """
+    
+    """
+    returnThis = np.prod(np.power(np.asarray(list(finalValue.index), dtype = 'float'), np.asarray(list(finalValue.values))))
+    return returnThis
+    
+def funcFactorialPrimeFactors(n):
+    """
+    Will take a number, 'n', to perform the factorial of n! and reduce each of the numbers 
+    that are multiplied together to produce it down to their prime factorizations 
+    and then compile those together to produce the n! prime factorization
+    """
+    factors = []
+    for i in range(2, n+1):
+        factors.append(funcPrimeFactors(i))
+    factors = [int(item) for sublist in factors for item in sublist]
+    return Series(factors).value_counts()
+    
+    
+def funcPrimeFactors(n):
+    """
+    Returns all the prime factors of a positive integer
+    """
+    factors = []
+    d = 2
+    while n > 1:
+        while n % d == 0:
+            factors.append(d)
+            n /= d
+        d = d + 1
+        if d*d > n:
+            if n > 1: factors.append(n)
+            break
+    return factors
+
+
+# EXAMPLE CODE:
+# Can I get this to work on the in-class example?
+vec_cols = DataFrame([[1, 1], [3, 3], [1, 1], [3, 2], [1, 2], [1, 3], 
                          [3, 3], [2, 3], [2, 2], [3, 3], [1, 3], [1, 2],
-                         [1, 2], [1, 2], [1, 2], [1, 2], [1, 1], [1, 2],
+                         [1, 2], [1, 2], [1, 2], [1, 1], [1, 2], [1, 1],
                          [1, 3], [2, 2]])
 cat_counts = funcCountCategories(vec_cols, 2, 3)
+funcOneBayesFactor(cat_counts)
+# Expected output is 12.87 so this works fairly well
 
 
-#rater1 = df.loc[:, ['chimpcode', 'ratercode', 'dominance', 'extraversion', 'conscientiousness', 'agreeableness', 'neuroticism']]
-#rater1 = rater1.rename(columns = lambda x: x + '_1')
-#rater1 = rater1.rename(columns = {'chimpcode_1' : 'chimpcode'})
-#rater2 = df.loc[:, ['chimpcode', 'ratercode', 'dominance', 'extraversion', 'conscientiousness', 'agreeableness', 'neuroticism']]
-#rater2 = rater2.rename(columns = lambda x: x + '_2')
-#rater2 = rater2.rename(columns = {'chimpcode_2' : 'chimpcode'})
-#raters_data = rater_pairs.merge(rater1, on = ['chimpcode', 'ratercode_1'])
-#raters_data = raters_data.merge(rater2, on = ['chimpcode', 'ratercode_2'])        
+
+
+
         
         
-# Do the work for triples
-rater_triples = pd.DataFrame()
-count = 0
-for rater1 in rater_list:
-    rater2_list = rater_list[np.where(rater_list > rater1)]
-    for rater2 in rater2_list:
-        rater3_list = rater2_list[np.where(rater2_list > rater2)]
-        for rater3 in rater3_list:
-            rater1_chimps = df_key[df_key['ratercode'] == rater1]
-            rater1_chimps = rater1_chimps.rename(columns = {'ratercode' : 'ratercode_1'})
-            rater2_chimps = df_key[df_key['ratercode'] == rater2]
-            rater2_chimps = rater2_chimps.rename(columns = {'ratercode' : 'ratercode_2'})
-            rater3_chimps = df_key[df_key['ratercode'] == rater3]
-            rater3_chimps = rater3_chimps.rename(columns = {'ratercode' : 'ratercode_3'})
-            rater_collection = rater1_chimps.merge(rater2_chimps, on = 'chimpcode')
-            rater_collection = rater_collection.merge(rater3_chimps, on = 'chimpcode')
-            if len(rater_collection) >= count_cutoff:
-                print("The " + rater1 + ", " + rater2 + ", and " + rater3 + " triple have " + str(len(rater_collection)) + ' chimps in common.')
-                rater_triples = rater_triples.append(rater_collection)
-                count += 1
-print(str(count) + ' grader triples have at least ' + str(count_cutoff) + ' chimps in common.')        
-
-                
-         
-# Now for groupings of 4
-rater_quads = pd.DataFrame()
-count = 0
-for rater1 in rater_list:
-    rater2_list = rater_list[np.where(rater_list > rater1)]
-    for rater2 in rater2_list:
-        rater3_list = rater2_list[np.where(rater2_list > rater2)]
-        for rater3 in rater3_list:
-            rater4_list = rater3_list[np.where(rater3_list > rater3)]
-            for rater4 in rater4_list:
-                rater1_chimps = df_key[df_key['ratercode'] == rater1]
-                rater1_chimps = rater1_chimps.rename(columns = {'ratercode' : 'ratercode_1'})
-                rater2_chimps = df_key[df_key['ratercode'] == rater2]
-                rater2_chimps = rater2_chimps.rename(columns = {'ratercode' : 'ratercode_2'})
-                rater3_chimps = df_key[df_key['ratercode'] == rater3]
-                rater3_chimps = rater3_chimps.rename(columns = {'ratercode' : 'ratercode_3'})
-                rater4_chimps = df_key[df_key['ratercode'] == rater4]
-                rater4_chimps = rater4_chimps.rename(columns = {'ratercode' : 'ratercode_4'})
-                rater_collection = rater1_chimps.merge(rater2_chimps, on = 'chimpcode')
-                rater_collection = rater_collection.merge(rater3_chimps, on = 'chimpcode')
-                rater_collection = rater_collection.merge(rater4_chimps, on = 'chimpcode')
-                if len(rater_collection) >= count_cutoff:
-                    print("The " + rater1 + ", " + rater2 + ", " + rater3 + ", and " + rater4 + " quad have " + str(len(rater_collection)) + ' chimps in common.')
-                    rater_quads = rater_quads.append(rater_collection)
-                    count += 1
-print(str(count) + ' grader quads have at least ' + str(count_cutoff) + ' chimps in common.')        
-
-
-# And lastly try 5 <-- clear at this point that there is also a 6-combo: A,E,M,N,Q,W
-rater_quints = pd.DataFrame()
-count = 0
-for rater1 in rater_list:
-    rater2_list = rater_list[np.where(rater_list > rater1)]
-    for rater2 in rater2_list:
-        rater3_list = rater2_list[np.where(rater2_list > rater2)]
-        for rater3 in rater3_list:
-            rater4_list = rater3_list[np.where(rater3_list > rater3)]
-            for rater4 in rater4_list:
-                rater5_list = rater4_list[np.where(rater4_list > rater4)]
-                for rater5 in rater5_list:
-                    rater1_chimps = df_key[df_key['ratercode'] == rater1]
-                    rater1_chimps = rater1_chimps.rename(columns = {'ratercode' : 'ratercode_1'})
-                    rater2_chimps = df_key[df_key['ratercode'] == rater2]
-                    rater2_chimps = rater2_chimps.rename(columns = {'ratercode' : 'ratercode_2'})
-                    rater3_chimps = df_key[df_key['ratercode'] == rater3]
-                    rater3_chimps = rater3_chimps.rename(columns = {'ratercode' : 'ratercode_3'})
-                    rater4_chimps = df_key[df_key['ratercode'] == rater4]
-                    rater4_chimps = rater4_chimps.rename(columns = {'ratercode' : 'ratercode_4'})
-                    rater5_chimps = df_key[df_key['ratercode'] == rater5]
-                    rater5_chimps = rater5_chimps.rename(columns = {'ratercode' : 'ratercode_5'})
-                    rater_collection = rater1_chimps.merge(rater2_chimps, on = 'chimpcode')
-                    rater_collection = rater_collection.merge(rater3_chimps, on = 'chimpcode')
-                    rater_collection = rater_collection.merge(rater4_chimps, on = 'chimpcode')
-                    rater_collection = rater_collection.merge(rater5_chimps, on = 'chimpcode')
-                    if len(rater_collection) >= count_cutoff:
-                        print("The " + rater1 + ", " + rater2 + ", " + rater3 + ", " + rater4 + ", and " + rater5 + " quint have " + str(len(rater_collection)) + ' chimps in common.')
-                        rater_quints = rater_quints.append(rater_collection)
-                        count += 1
-print(str(count) + ' grader quints have at least ' + str(count_cutoff) + ' chimps in common.')        
+## Do the work for triples
+#rater_triples = DataFrame()
+#count = 0
+#for rater1 in rater_list:
+#    rater2_list = rater_list[np.where(rater_list > rater1)]
+#    for rater2 in rater2_list:
+#        rater3_list = rater2_list[np.where(rater2_list > rater2)]
+#        for rater3 in rater3_list:
+#            rater1_chimps = df_key[df_key['ratercode'] == rater1]
+#            rater1_chimps = rater1_chimps.rename(columns = {'ratercode' : 'ratercode_1'})
+#            rater2_chimps = df_key[df_key['ratercode'] == rater2]
+#            rater2_chimps = rater2_chimps.rename(columns = {'ratercode' : 'ratercode_2'})
+#            rater3_chimps = df_key[df_key['ratercode'] == rater3]
+#            rater3_chimps = rater3_chimps.rename(columns = {'ratercode' : 'ratercode_3'})
+#            rater_collection = rater1_chimps.merge(rater2_chimps, on = 'chimpcode')
+#            rater_collection = rater_collection.merge(rater3_chimps, on = 'chimpcode')
+#            if len(rater_collection) >= count_cutoff:
+#                print("The " + rater1 + ", " + rater2 + ", and " + rater3 + " triple have " + str(len(rater_collection)) + ' chimps in common.')
+#                rater_triples = rater_triples.append(rater_collection)
+#                count += 1
+#print(str(count) + ' grader triples have at least ' + str(count_cutoff) + ' chimps in common.')        
+#
+#                
+#         
+## Now for groupings of 4
+#rater_quads = DataFrame()
+#count = 0
+#for rater1 in rater_list:
+#    rater2_list = rater_list[np.where(rater_list > rater1)]
+#    for rater2 in rater2_list:
+#        rater3_list = rater2_list[np.where(rater2_list > rater2)]
+#        for rater3 in rater3_list:
+#            rater4_list = rater3_list[np.where(rater3_list > rater3)]
+#            for rater4 in rater4_list:
+#                rater1_chimps = df_key[df_key['ratercode'] == rater1]
+#                rater1_chimps = rater1_chimps.rename(columns = {'ratercode' : 'ratercode_1'})
+#                rater2_chimps = df_key[df_key['ratercode'] == rater2]
+#                rater2_chimps = rater2_chimps.rename(columns = {'ratercode' : 'ratercode_2'})
+#                rater3_chimps = df_key[df_key['ratercode'] == rater3]
+#                rater3_chimps = rater3_chimps.rename(columns = {'ratercode' : 'ratercode_3'})
+#                rater4_chimps = df_key[df_key['ratercode'] == rater4]
+#                rater4_chimps = rater4_chimps.rename(columns = {'ratercode' : 'ratercode_4'})
+#                rater_collection = rater1_chimps.merge(rater2_chimps, on = 'chimpcode')
+#                rater_collection = rater_collection.merge(rater3_chimps, on = 'chimpcode')
+#                rater_collection = rater_collection.merge(rater4_chimps, on = 'chimpcode')
+#                if len(rater_collection) >= count_cutoff:
+#                    print("The " + rater1 + ", " + rater2 + ", " + rater3 + ", and " + rater4 + " quad have " + str(len(rater_collection)) + ' chimps in common.')
+#                    rater_quads = rater_quads.append(rater_collection)
+#                    count += 1
+#print(str(count) + ' grader quads have at least ' + str(count_cutoff) + ' chimps in common.')        
+#
+#
+## And lastly try 5 <-- clear at this point that there is also a 6-combo: A,E,M,N,Q,W
+#rater_quints = DataFrame()
+#count = 0
+#for rater1 in rater_list:
+#    rater2_list = rater_list[np.where(rater_list > rater1)]
+#    for rater2 in rater2_list:
+#        rater3_list = rater2_list[np.where(rater2_list > rater2)]
+#        for rater3 in rater3_list:
+#            rater4_list = rater3_list[np.where(rater3_list > rater3)]
+#            for rater4 in rater4_list:
+#                rater5_list = rater4_list[np.where(rater4_list > rater4)]
+#                for rater5 in rater5_list:
+#                    rater1_chimps = df_key[df_key['ratercode'] == rater1]
+#                    rater1_chimps = rater1_chimps.rename(columns = {'ratercode' : 'ratercode_1'})
+#                    rater2_chimps = df_key[df_key['ratercode'] == rater2]
+#                    rater2_chimps = rater2_chimps.rename(columns = {'ratercode' : 'ratercode_2'})
+#                    rater3_chimps = df_key[df_key['ratercode'] == rater3]
+#                    rater3_chimps = rater3_chimps.rename(columns = {'ratercode' : 'ratercode_3'})
+#                    rater4_chimps = df_key[df_key['ratercode'] == rater4]
+#                    rater4_chimps = rater4_chimps.rename(columns = {'ratercode' : 'ratercode_4'})
+#                    rater5_chimps = df_key[df_key['ratercode'] == rater5]
+#                    rater5_chimps = rater5_chimps.rename(columns = {'ratercode' : 'ratercode_5'})
+#                    rater_collection = rater1_chimps.merge(rater2_chimps, on = 'chimpcode')
+#                    rater_collection = rater_collection.merge(rater3_chimps, on = 'chimpcode')
+#                    rater_collection = rater_collection.merge(rater4_chimps, on = 'chimpcode')
+#                    rater_collection = rater_collection.merge(rater5_chimps, on = 'chimpcode')
+#                    if len(rater_collection) >= count_cutoff:
+#                        print("The " + rater1 + ", " + rater2 + ", " + rater3 + ", " + rater4 + ", and " + rater5 + " quint have " + str(len(rater_collection)) + ' chimps in common.')
+#                        rater_quints = rater_quints.append(rater_collection)
+#                        count += 1
+#print(str(count) + ' grader quints have at least ' + str(count_cutoff) + ' chimps in common.')        
