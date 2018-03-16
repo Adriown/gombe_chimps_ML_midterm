@@ -32,7 +32,12 @@ df.loc[:,'dom.raw':'innov.raw'].isnull().sum()
 # The best way to deal with these missing values in not to impute, but rather to ignore 
 # them during the outcome analysis step when comparing the scores between raters for that chimp
 
-
+len(df['ratercode'].unique())
+len(df['chimpcode'].unique())
+df.hist(column = ['dom.raw', 'sol.raw', 'impl.raw', 'symp.raw', 
+                 'stbl.raw', 'invt.raw', 'depd.raw', 'soc.raw', 'thotl.raw', 'help.raw', 
+                 'exct.raw', 'inqs.raw', 'decs.raw', 'indv.raw', 'reckl.raw', 'sens.raw', 
+                 'unem.raw', 'cur.raw', 'vuln.raw', 'actv.raw', 'pred.raw', 'conv.raw', 'cool.raw', 'innov.raw'], figsize = (25, 16), bins= 7)
 
 ###############################################################
 ###                                                         ###
@@ -191,9 +196,9 @@ def funcAllBayesFactor(rater_tot, group_size = 2, num_cats = 7, columns_of_inter
     df_bayes_factors = DataFrame()
     ratercodes = ['ratercode_' + str(i) for i in range(1, group_size + 1)]
     for name, group in rater_tot.groupby(ratercodes):
-#        print(name)
+        print(name)
         for col in columns_of_interest:
-#            print(col)
+            print(col)
             cols = [col + '_' + str(i) for i in range(1, group_size + 1)]
             df_cols = group[cols]
             # Important step here: Remove the row that contains any NAs from the
@@ -317,6 +322,20 @@ def funcPrimeFactors(n):
             break
     return factors
 
+def boxplot_sorted(df, by, column, title):
+    """
+    Code to help with boxplot plotting. Pass the 'df' as the DataFrame of interest,
+    'by' as the x-axis column, 'column' as the y-axis column, and then a 'title.
+    """
+    df2 = pd.DataFrame({col:vals[column] for col, vals in df.groupby(by)})
+    meds = df2.median().sort_values(ascending = False)
+    plot_this = df2[meds.index].boxplot(rot=90, figsize = (10, 6))
+    plot_this.axhline(0.5, color='black')
+    fig = plot_this.get_figure()
+    fig.suptitle("")
+    plot_this.set_title(title)
+    plot_this.set_ylabel(column)
+    plot_this.set_xlabel(by)
 
 
 
@@ -347,11 +366,73 @@ funcOneBayesFactor(cat_counts)
 
 
 
+
+
+
+###############################################################
+###                                                         ###
+###             EXPLORATORY CATEGORY ANALYSIS               ###
+###                                                         ###
+###############################################################
+
+df1 = df.copy()  # TFor the 7 categories
+df2 = df1.copy() # For the 3 categories
+df3 = df1.copy() # For the 2 categories (4 small)
+df4 = df1.copy() # For the 2 categories (4 small)
+# Analysis with the 7 original categories
+raters_data_7 = funcMergeRaters(df = df1, rater_groups = rater_pairs, group_size = 2)
+pairs_bayes_factors_7 = funcAllBayesFactor(raters_data_7, 2, 7)   
+
+# Reduce to 3 categories (for the sake of useful insights)
+df2.loc[:,'dom.raw':'innov.raw'] = np.floor(df2.loc[:,'dom.raw':'innov.raw'] / 3) + 1
+# Analysis with the revised 3 categories
+raters_data_3 = funcMergeRaters(df = df2, rater_groups = rater_pairs, group_size = 2)
+pairs_bayes_factors_3 = funcAllBayesFactor(raters_data_3, 2, 3)   
+
+# Reduce to 2 categories (for the sake of useful insights)
+df3.loc[:,'dom.raw':'innov.raw'] = np.floor(df3.loc[:,'dom.raw':'innov.raw'] / 4.1) + 1
+# Analysis with the revised 2 categories (4 is small)
+raters_data_2_small = funcMergeRaters(df = df3, rater_groups = rater_pairs, group_size = 2)
+pairs_bayes_factors_2_small = funcAllBayesFactor(raters_data_2_small, 2, 2)   
+
+# Reduce to 2 categories (for the sake of useful insights)
+df4.loc[:,'dom.raw':'innov.raw'] = np.floor(df4.loc[:,'dom.raw':'innov.raw'] / 4) + 1
+# Analysis with the revised 2 categories (4 is small)
+raters_data_2_large = funcMergeRaters(df = df4, rater_groups = rater_pairs, group_size = 2)
+pairs_bayes_factors_2_large = funcAllBayesFactor(raters_data_2_large, 2, 2)   
+
+# Merging for plotting purposes
+dummy = pairs_bayes_factors_7.set_index(['raters', 'trait']).join(pairs_bayes_factors_3.set_index(['raters', 'trait']), rsuffix='_3')
+dummy = dummy.join(pairs_bayes_factors_2_small.set_index(['raters', 'trait']), rsuffix='_2_sm')
+dummy = dummy.join(pairs_bayes_factors_2_large.set_index(['raters', 'trait']), lsuffix = '_7', rsuffix='_2_lg')
+
+# The large amount of sensitivity to our categorizations is a bit troubling indeed
+dummy.plot.scatter(x = 'p(diff)_2_sm', y = 'p(diff)_2_lg', alpha = .4)
+dummy.plot.scatter(x = 'p(diff)_3', y = 'p(diff)_7', alpha = .4)
+dummy.plot.scatter(x = 'p(diff)_2_sm', y = 'p(diff)_3', alpha = .4)
+
+
 ###############################################################
 ###                                                         ###
 ###                     ACTUAL ANALYSIS                     ###
 ###                                                         ###
 ###############################################################
+# Read in the data
+df = pd.read_csv('/Users/mead/Downloads/gombe_460.csv')
+# There is one duplicate entry -- chimp O198 with rater A was done twice in a 3-day period. Remove the older score.
+df = df.drop_duplicates(['chimpcode', 'ratercode'])
+# Keep the primary key
+df_key = df[['chimpcode', 'ratercode']]
+# Find unique raters
+rater_list = np.unique(df_key['ratercode'])
+# The data processing step to find the complete pairwise list of chimp-grader-grader groupings
+count_cutoff = 20
+# There are not many missing values in the columns we are interested (at most 4 in one column)
+df.loc[:,'dom.raw':'innov.raw'].isnull().sum()
+
+# Reduce to 3 categories (for the sake of useful insights)
+df.loc[:,'dom.raw':'innov.raw'] = np.floor(df.loc[:,'dom.raw':'innov.raw'] / 3) + 1
+num_catg = 3
 
 #################################
 ###          PAIRS            ###
@@ -371,13 +452,36 @@ for group in pairs_bayes_factors['trait'].unique():
     plot_this = try_this.plot.bar(x = 'raters', y = 'p(diff)', legend = False, title = str(group))
     plot_this.axhline(0.5, color='black')
 # Boxplot with traits on the x-axis and the p(diff) on the y-axis across all pairs
-plot_this = pairs_bayes_factors.boxplot(column = 'p(diff)', by = 'trait')
-plot_this.axhline(0.5, color='black')
-plot_this.set_title('Boxplot of p(diff) across traits for all rater pairs with > 20 chimps in common')
+boxplot_sorted(df = pairs_bayes_factors, 
+               by = 'trait',
+               column = 'p(diff)', 
+               title = 'p(diff) across traits for all rater pairs with > 20 chimps in common')
 # Boxplot with pairs on the x-axis and the p(diff) on the y-axis across all traits
-plot_this = pairs_bayes_factors.boxplot(column = 'p(diff)', by = 'raters')
-plot_this.axhline(0.5, color='black')
-plot_this.set_title('Boxplot of p(diff) across rater pairs with > 20 chimps in common for all traits')
+boxplot_sorted(df = pairs_bayes_factors, 
+               by = 'raters',
+               column = 'p(diff)', 
+               title = 'p(diff) across rater pairs with > 20 chimps in common for all traits')
+
+# Interested in producing a plot with the rater pairs on the x-axis and p(diff) on the y-axis.
+# p(diff) would be calculated across ALL traits (so rbind the appropriate cols together by rater pair)
+# IT TURNS OUT THAT THIS IS ACTUALLY JUST COMPLETELY USELESS. IT DOESN'T WORK
+#cols_1 = [colname for colname in raters_data.columns if '.raw_1' in colname]
+#cols_2 = [colname for colname in raters_data.columns if '.raw_2' in colname]
+#
+#raters_data_pairs_tot = DataFrame()
+#for df_group in raters_data.groupby(['ratercode_1', 'ratercode_2']):
+#    df_cols_1 = df_group[1][cols_1].melt()
+#    df_cols_2 = df_group[1][cols_2].melt()
+#    new_df = DataFrame(columns = ['ratercode_1', 'ratercode_2'])
+#    new_df['.raw_1'] = df_cols_1['value']
+#    new_df['.raw_2'] = df_cols_2['value']
+#    new_df['ratercode_1'] = df_group[0][0]
+#    new_df['ratercode_2'] = df_group[0][1]
+#    raters_data_pairs_tot = raters_data_pairs_tot.append(new_df)
+#
+#pairs_bayes_factors_tot = funcAllBayesFactor(raters_data_pairs_tot, 2, num_catg, columns_of_interest = ['.raw'])
+#plot_this = pairs_bayes_factors_tot.plot.bar(x = 'raters', y = 'p(diff)', legend = False, title = str('All Raters across all Traits'))
+#plot_this.axhline(0.5, color='black')
 
 
 #################################
@@ -385,7 +489,7 @@ plot_this.set_title('Boxplot of p(diff) across rater pairs with > 20 chimps in c
 #################################
 # ACTUALLY RUNNING PORTION
 raters_data = funcMergeRaters(df = df, rater_groups = rater_triples, group_size = 3)
-triples_bayes_factors = funcAllBayesFactor(raters_data, 3, 7)
+triples_bayes_factors = funcAllBayesFactor(raters_data, 3, num_catg)
 
 # Plots performed by triples of raters with traits on the x-axis
 for group in triples_bayes_factors['raters'].unique():
@@ -397,6 +501,16 @@ for group in triples_bayes_factors['trait'].unique():
     try_this = triples_bayes_factors[triples_bayes_factors['trait'] == group]
     plot_this = try_this.plot.bar(x = 'raters', y = 'p(diff)', legend = False, title = str(group))
     plot_this.axhline(0.5, color='black')
+# Boxplot with traits on the x-axis and the p(diff) on the y-axis across all pairs
+boxplot_sorted(df = triples_bayes_factors, 
+               by = 'trait',
+               column = 'p(diff)', 
+               title = 'p(diff) across traits for all rater triples with > 20 chimps in common')
+# Boxplot with pairs on the x-axis and the p(diff) on the y-axis across all traits
+boxplot_sorted(df = triples_bayes_factors, 
+               by = 'raters',
+               column = 'p(diff)', 
+               title = 'p(diff) across rater triples with > 20 chimps in common for all traits')
        
 
 #################################
@@ -404,7 +518,7 @@ for group in triples_bayes_factors['trait'].unique():
 #################################
 # ACTUALLY RUNNING PORTION
 raters_data = funcMergeRaters(df = df, rater_groups = rater_quads, group_size = 4)
-quads_bayes_factors = funcAllBayesFactor(raters_data, 4, 7)
+quads_bayes_factors = funcAllBayesFactor(raters_data, 4, num_catg)
 
 # Plots performed by quadruples of raters with traits on the x-axis
 for group in quads_bayes_factors['raters'].unique():
@@ -416,6 +530,16 @@ for group in quads_bayes_factors['trait'].unique():
     try_this = quads_bayes_factors[quads_bayes_factors['trait'] == group]
     plot_this = try_this.plot.bar(x = 'raters', y = 'p(diff)', legend = False, title = str(group))
     plot_this.axhline(0.5, color='black')
+# Boxplot with traits on the x-axis and the p(diff) on the y-axis across all pairs
+boxplot_sorted(df = quads_bayes_factors, 
+               by = 'trait',
+               column = 'p(diff)', 
+               title = 'p(diff) across traits for all rater quads with > 20 chimps in common')
+# Boxplot with pairs on the x-axis and the p(diff) on the y-axis across all traits
+boxplot_sorted(df = quads_bayes_factors, 
+               by = 'raters',
+               column = 'p(diff)', 
+               title = 'p(diff) across rater quads with > 20 chimps in common for all traits')
 
 
 #################################
@@ -423,7 +547,7 @@ for group in quads_bayes_factors['trait'].unique():
 #################################
 # ACTUALLY RUNNING PORTION
 raters_data = funcMergeRaters(df = df, rater_groups = rater_quints, group_size = 5)
-quints_bayes_factors = funcAllBayesFactor(raters_data, 5, 7)
+quints_bayes_factors = funcAllBayesFactor(raters_data, 5, num_catg)
 
 # Plots performed by quintuples of raters with traits on the x-axis
 for group in quints_bayes_factors['raters'].unique():
@@ -435,6 +559,16 @@ for group in quints_bayes_factors['trait'].unique():
     try_this = quints_bayes_factors[quints_bayes_factors['trait'] == group]
     plot_this = try_this.plot.bar(x = 'raters', y = 'p(diff)', legend = False, title = str(group))
     plot_this.axhline(0.5, color='black')
+# Boxplot with traits on the x-axis and the p(diff) on the y-axis across all pairs
+boxplot_sorted(df = quints_bayes_factors, 
+               by = 'trait',
+               column = 'p(diff)', 
+               title = 'p(diff) across traits for all rater quints with > 20 chimps in common')
+# Boxplot with pairs on the x-axis and the p(diff) on the y-axis across all traits
+boxplot_sorted(df = quints_bayes_factors, 
+               by = 'raters',
+               column = 'p(diff)', 
+               title = 'p(diff) across rater quints with > 20 chimps in common for all traits')
 
 
 #################################
@@ -442,32 +576,16 @@ for group in quints_bayes_factors['trait'].unique():
 #################################
 # ACTUALLY RUNNING PORTION
 raters_data = funcMergeRaters(df = df, rater_groups = rater_sexts, group_size = 6)
-sexts_bayes_factors = funcAllBayesFactor(raters_data, 6, 7)
+sexts_bayes_factors = funcAllBayesFactor(raters_data, 6, num_catg)
 
 # Plots performed by sextuples of raters with traits on the x-axis
 for group in sexts_bayes_factors['raters'].unique():
     try_this = sexts_bayes_factors[sexts_bayes_factors['raters'] == group]
-    plot_this = try_this.plot.bar(x = 'trait', y = 'p(diff)', legend = False, title = str(group))
+    plot_this = try_this.plot.bar(x = 'trait', y = 'p(diff)', legend = False, title = str(group), figsize = (9, 6))
     plot_this.axhline(0.5, color='black')
+    plot_this.set_ylabel('p(diff)')
 ## Plots performed by traits with sextuples of raters on the x-axis
 #for group in sexts_bayes_factors['trait'].unique():
 #    try_this = sexts_bayes_factors[sexts_bayes_factors['trait'] == group]
 #    plot_this = try_this.plot.bar(x = 'raters', y = 'p(diff)', legend = False, title = str(group))
 #    plot_this.axhline(0.5, color='black')
-
-
-
-
-
-## CHECK THIS ONE OUT: DEPD scores for RATERS A and E
-#list(raters_data.groupby(['ratercode_1', 'ratercode_2']))[0][1].loc[:, ['depd.raw_1', 'depd.raw_2']]
-## Actually looks pretty terrible
-
-# Need to plot
-#try_this = pairs_bayes_factors[pairs_bayes_factors['raters'] == ('A', 'E')]
-#try_this.plot.bar(x = 'trait', y = 'bayes_factor', ylim = (0, 20), legend = False)
-#try_this.plot.bar(x = 'trait', y = 'p(diff)', legend = False)
-#plot_this = try_this.plot.bar(x = 'trait', y = 'p(diff)', legend = False, title = '(A, E)')
-#plot_this.axhline(0.5, color='black')
-
-
