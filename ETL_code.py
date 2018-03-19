@@ -4,7 +4,7 @@
 Created on Thu Mar  1 11:16:16 2018
 
 @author: mead
-Also Myron and Boh
+Myron Chang, Adrian Mead, and Boh Young Suh
 """
 
 import pandas as pd
