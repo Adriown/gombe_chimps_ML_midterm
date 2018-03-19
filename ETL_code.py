@@ -4,6 +4,7 @@
 Created on Thu Mar  1 11:16:16 2018
 
 @author: mead
+Also Myron and Boh
 """
 
 import pandas as pd
@@ -11,6 +12,21 @@ from pandas import Series, DataFrame
 import numpy as np
 import matplotlib as mlp
 import matplotlib.pyplot as plt
+import seaborn as sns
+
+"""
+DIRECTIONS:
+You can run this code all at once from the very top. It should take ~3 to 5 
+minutes with the large number of factorial computations and combination searches
+that are going on. At the end a large number of plots are going to spit out.
+My advice is to re-plot these once the whole file has been run once by starting
+around line 440 (Actual Analysis). The boxplots from the presentation
+are produced by running the boxplot function calls. The other plots produce the
+barplots that make up these boxplots.
+
+Generally, the code is broken up into pre-processing, grouping raters, performing
+the Baye's Factor calculations, and then visualization.
+"""
 
 ###############################################################
 ###                                                         ###
@@ -22,7 +38,7 @@ df = pd.read_csv('/Users/mead/Downloads/gombe_460.csv')
 # There is one duplicate entry -- chimp O198 with rater A was done twice in a 3-day period. Remove the older score.
 df = df.drop_duplicates(['chimpcode', 'ratercode'])
 # Keep the primary key
-df_key = df[['chimpcode', 'ratercode']]
+df_key = df[['chimpcode', 'ratercode', 'month', 'day', 'year']] 
 # Find unique raters
 rater_list = np.unique(df_key['ratercode'])
 # The data processing step to find the complete pairwise list of chimp-grader-grader groupings
@@ -32,30 +48,39 @@ df.loc[:,'dom.raw':'innov.raw'].isnull().sum()
 # The best way to deal with these missing values in not to impute, but rather to ignore 
 # them during the outcome analysis step when comparing the scores between raters for that chimp
 
-len(df['ratercode'].unique())
-len(df['chimpcode'].unique())
+# Produce some trait distribution plots to examine how similarly these traits tend to be rated
 df.hist(column = ['dom.raw', 'sol.raw', 'impl.raw', 'symp.raw', 
                  'stbl.raw', 'invt.raw', 'depd.raw', 'soc.raw', 'thotl.raw', 'help.raw', 
                  'exct.raw', 'inqs.raw', 'decs.raw', 'indv.raw', 'reckl.raw', 'sens.raw', 
-                 'unem.raw', 'cur.raw', 'vuln.raw', 'actv.raw', 'pred.raw', 'conv.raw', 'cool.raw', 'innov.raw'], figsize = (25, 16), bins= 7)
+                 'unem.raw', 'cur.raw', 'vuln.raw', 'actv.raw', 'pred.raw', 'conv.raw', 'cool.raw', 'innov.raw'], figsize = (25, 18), bins= 7)
 
 ###############################################################
 ###                                                         ###
 ###             CHIMP-RATER COLLECTION CREATION             ###
 ###                                                         ###
 ###############################################################
+# We want to introduce the ability to only keep chimp-rater pairs that are within a certain number of days together
+df_key['date'] = pd.to_datetime(df_key[['year', 'month', 'day']])
+df_key = df_key[['chimpcode', 'ratercode', 'date']]
+# Enable us to, if we want, control the survey time-window that we have for taking chimpanzee ratings
+max_date_diff = 20
+
 rater_pairs = DataFrame()
 count = 0
 for rater1 in rater_list:
     amended_list = rater_list[np.where(rater_list > rater1)]
     for rater2 in amended_list:
         rater1_chimps = df_key[df_key['ratercode'] == rater1]
-        rater1_chimps = rater1_chimps.rename(columns = {'ratercode' : 'ratercode_1'})
+        rater1_chimps = rater1_chimps.rename(columns = {'ratercode' : 'ratercode_1',
+                                                        'date' : 'date_1'})
         rater2_chimps = df_key[df_key['ratercode'] == rater2]
-        rater2_chimps = rater2_chimps.rename(columns = {'ratercode' : 'ratercode_2'})
+        rater2_chimps = rater2_chimps.rename(columns = {'ratercode' : 'ratercode_2',
+                                                        'date' : 'date_2'})
         rater_collection = rater1_chimps.merge(rater2_chimps, on = 'chimpcode')
+        rater_collection['date_diff'] = abs(rater_collection['date_1'] - rater_collection['date_2']) <= pd.Timedelta(max_date_diff, unit = 'd')
+        date_diff = len(rater_collection[rater_collection['date_diff']])
         if len(rater_collection) >= count_cutoff:
-            print("The " + rater1 + " and " + rater2 + " pair have " + str(len(rater_collection)) + ' chimps in common.')
+            print("The " + rater1 + " and " + rater2 + " pair have " + str(len(rater_collection)) + ' chimps in common. And have ' + str(date_diff) + ' chimps rated within ' + str(max_date_diff) + ' days of one another.')
             rater_pairs = rater_pairs.append(rater_collection)
             count += 1
 print(str(count) + ' grader pairs have at least ' + str(count_cutoff) + ' chimps in common.')        
@@ -322,13 +347,16 @@ def funcPrimeFactors(n):
             break
     return factors
 
-def boxplot_sorted(df, by, column, title):
+def boxplot_sorted(df, by, column, title, sort = True):
     """
     Code to help with boxplot plotting. Pass the 'df' as the DataFrame of interest,
     'by' as the x-axis column, 'column' as the y-axis column, and then a 'title.
     """
     df2 = pd.DataFrame({col:vals[column] for col, vals in df.groupby(by)})
-    meds = df2.median().sort_values(ascending = False)
+    if sort:
+        meds = df2.median().sort_values(ascending = False)
+    else:
+        meds = df2.median()
     plot_this = df2[meds.index].boxplot(rot=90, figsize = (10, 6))
     plot_this.axhline(0.5, color='black')
     fig = plot_this.get_figure()
@@ -367,15 +395,13 @@ funcOneBayesFactor(cat_counts)
 
 
 
-
-
 ###############################################################
 ###                                                         ###
 ###             EXPLORATORY CATEGORY ANALYSIS               ###
 ###                                                         ###
 ###############################################################
 
-df1 = df.copy()  # TFor the 7 categories
+df1 = df.copy()  # For the 7 categories
 df2 = df1.copy() # For the 3 categories
 df3 = df1.copy() # For the 2 categories (4 small)
 df4 = df1.copy() # For the 2 categories (4 small)
@@ -406,7 +432,8 @@ dummy = pairs_bayes_factors_7.set_index(['raters', 'trait']).join(pairs_bayes_fa
 dummy = dummy.join(pairs_bayes_factors_2_small.set_index(['raters', 'trait']), rsuffix='_2_sm')
 dummy = dummy.join(pairs_bayes_factors_2_large.set_index(['raters', 'trait']), lsuffix = '_7', rsuffix='_2_lg')
 
-# The large amount of sensitivity to our categorizations is a bit troubling indeed
+# The large amount of sensitivity to our categorizations is a bit troubling; we
+# need to see how this affects the overall distributions of p(diff)s
 dummy.plot.scatter(x = 'p(diff)_2_sm', y = 'p(diff)_2_lg', alpha = .4)
 dummy.plot.scatter(x = 'p(diff)_3', y = 'p(diff)_7', alpha = .4)
 dummy.plot.scatter(x = 'p(diff)_2_sm', y = 'p(diff)_3', alpha = .4)
@@ -439,7 +466,7 @@ num_catg = 3
 #################################
 # ACTUALLY RUNNING PORTION
 raters_data = funcMergeRaters(df = df, rater_groups = rater_pairs, group_size = 2)
-pairs_bayes_factors = funcAllBayesFactor(raters_data, 2, 7)   
+pairs_bayes_factors = funcAllBayesFactor(raters_data, 2, num_catg)   
 
 # Plots performed by pairs of raters with traits on the x-axis
 for group in pairs_bayes_factors['raters'].unique():
@@ -452,15 +479,39 @@ for group in pairs_bayes_factors['trait'].unique():
     plot_this = try_this.plot.bar(x = 'raters', y = 'p(diff)', legend = False, title = str(group))
     plot_this.axhline(0.5, color='black')
 # Boxplot with traits on the x-axis and the p(diff) on the y-axis across all pairs
+"""
+Boxplots may or may not show outliers. Not certain about why the behavior is not the 
+same across computers. The medians, IQR, etc are always the same though.
+"""
 boxplot_sorted(df = pairs_bayes_factors, 
                by = 'trait',
                column = 'p(diff)', 
-               title = 'p(diff) across traits for all rater pairs with > 20 chimps in common')
+               title = 'p(diff) across traits for all rater pairs with > 20 chimps in common',
+               sort = True)
 # Boxplot with pairs on the x-axis and the p(diff) on the y-axis across all traits
 boxplot_sorted(df = pairs_bayes_factors, 
                by = 'raters',
                column = 'p(diff)', 
-               title = 'p(diff) across rater pairs with > 20 chimps in common for all traits')
+               title = 'p(diff) across rater pairs with > 20 chimps in common for all traits',
+               sort = True)
+
+# This is where we build the heatmap
+heatmap_attempt = pairs_bayes_factors.groupby('raters').median()
+fill_me = DataFrame()
+for group, row in heatmap_attempt.groupby('raters'):
+    i, j = group
+    if i not in fill_me.columns:
+        fill_me[i] = -1
+    if j not in fill_me.columns:
+        fill_me[j] = -1
+fill_me = DataFrame(columns = fill_me.columns, index = fill_me.columns)
+for group, row in heatmap_attempt.groupby('raters'):
+    i, j = group
+    fill_me.loc[i, j] = row['p(diff)'][0]
+    fill_me.loc[j, i] = row['p(diff)'][0]
+fill_me = fill_me.fillna(np.nan)
+mask = fill_me.isnull()
+ax = sns.heatmap(fill_me, mask = mask, xticklabels = 1, yticklabels = 1, cmap = "YlGnBu")
 
 # Interested in producing a plot with the rater pairs on the x-axis and p(diff) on the y-axis.
 # p(diff) would be calculated across ALL traits (so rbind the appropriate cols together by rater pair)
